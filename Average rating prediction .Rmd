@@ -1,0 +1,622 @@
+---
+title: "Distributed Data Analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#install packages
+#install dplyr
+if(require(dplyr) == FALSE){
+  ('dplyr')
+}
+
+#install libr
+if(require(libr) == FALSE){
+  ('libr')
+}
+
+#install pca3d
+#first install pca3d
+if(require(pca3d) == FALSE){
+  ('pca3d')
+}
+
+#install cluster
+if(require(cluster) == FALSE){
+  install.packages('cluster')
+}
+
+#install kernlab
+if(require(kernlab) == FALSE){
+  install.packages('kernlab')
+}
+
+#install class
+if(require(class) == FALSE){
+  install.packages('class')
+}
+
+#install factoextra
+if(require(factoextra) == FALSE){
+  install.packages('factoextra')
+}
+
+#install NbClust
+if(require(NbClust) == FALSE){
+  install.packages('NbClust')
+}
+
+if(require(cluster) == FALSE){
+  ('cluster')
+}
+
+if(require(colorspace) == FALSE){
+  ('colorspace')
+}
+
+#load libraries
+library(dplyr)
+library(stringr)
+library(libr)
+library(tidyverse)
+library(ggplot2)
+library(MASS)
+library(kernlab)
+library(class)
+library(factoextra)
+library(NbClust)
+library(cluster)
+library(colorspace)
+```
+#load data
+```{r}
+movies.data <- read.csv("MovieData.csv")
+ratings.data <- read.csv("RatingsData.csv")
+#View(movies.data)
+#View(ratings.data)
+```
+
+#merge data files
+```{r}
+merge.movies <- merge(movies.data,ratings.data, by="imdb_title_id")
+#View(merge.movies)
+#filter required  columns only
+merge.movies.filter <- dplyr::select(merge.movies, imdb_title_id, title, genre, duration, country, language, director, actors, avg_vote, budget, usa_gross_income, worlwide_gross_income, metascore, reviews_from_users, reviews_from_critics, weighted_average_vote, total_votes)
+#convert to csv file
+#write.csv(merge.movies.filter, "C:\\Users\\farah\\OneDrive\\Desktop\\Brunel Uni\\CS5811\\CS5811 V1\\MergedMovies.csv", row.names = TRUE)
+```
+
+#Correct typo and rename column names
+```{r}
+merge.movies.filter <- merge.movies.filter %>%
+  rename(worldwide_gross_income = worlwide_gross_income,
+         average_votes = avg_vote)
+```
+
+#get a summary of the data types
+```{r}
+str(merge.movies.filter)
+#View(merge.movies.filter)
+```
+#Editing and Cleaning the dataset has multiple stages. First currency conversion, then editing average scores, and then metascores. 
+##Currency Conversion
+```{r}
+#Changing Datatypes
+#Convert usa_gross_income and worldwide_gross_income to numeric types
+#Remove the "," from the number and convert to a factor
+#usa_gross_income
+merge.movies.filter$usa_gross_income <- as.factor(gsub(",", "", merge.movies.filter$usa_gross_income))
+#worldwide_gross_income
+merge.movies.filter$worldwide_gross_income <- as.factor(gsub(",", "", merge.movies.filter$worldwide_gross_income))
+#Remove the "$" sign from the factor
+#usa_gross_income
+merge.movies.filter$usa_gross_income <- as.numeric(gsub("\\$", "", merge.movies.filter$usa_gross_income))
+#worldwide_gross_income
+merge.movies.filter$worldwide_gross_income <- as.numeric(gsub("\\$", "", merge.movies.filter$worldwide_gross_income))
+
+#Convert budget to numeric
+#Remove "," from the budget values
+merge.movies.filter$budget <- as.factor(gsub(",", "", merge.movies.filter$budget))
+#Convert the factor back to character 
+merge.movies.filter$budget <- as.character(merge.movies.filter$budget)
+#Extract numeric values from budget and store in a new column "BudgetValue"
+merge.movies.filter$BudgetValue <- as.numeric(str_extract(merge.movies.filter$budget, "[0-9]+"))
+#Extract character (currency) values from budget and store in a new column "BudgetCurrency"
+merge.movies.filter$BudgetCurrency <- str_extract(merge.movies.filter$budget, "[aA-zZ]+")
+#Check that data type is numeric
+summary(merge.movies.filter)
+
+#find movies that occurred more than 100 times
+#Count total currencies
+budget.table <- table(merge.movies.filter$BudgetCurrency)
+#Order the currencies
+budget.table.order <- budget.table[order(budget.table)]
+#Filter out curriencie greater than 100
+top.budget.table <- budget.table.order[budget.table.order > 100]
+#Retrieve names of curriencies occuring more than 100 times
+top.budget.table.name <- names(top.budget.table)
+top.budget.table.name
+
+#create a list to store the conversion rates
+CurrencyConvert <- list()
+
+#Populate the list with the currency and conversion rate
+CurrencyConvert["DKK"] <- 0.16
+CurrencyConvert["BRL"] <- 0.18
+CurrencyConvert["CAD"] <- 0.79
+CurrencyConvert["DEM"] <- 0.62
+CurrencyConvert["AUD"] <- 0.77
+CurrencyConvert["EUR"] <- 1.21
+CurrencyConvert["FIM"] <- 0.20
+CurrencyConvert["FRF"] <- 0.18
+CurrencyConvert["GBP"] <- 1.39
+CurrencyConvert["INR"] <- 0.014
+CurrencyConvert["NOK"] <- 0.12
+CurrencyConvert["SEK"] <- 0.12
+
+#convert it to a vector
+Currency <- unlist(CurrencyConvert)
+
+#Run datastep to convert currency to USD
+merge.movies.filter <- datastep(merge.movies.filter, {
+  
+  if (is.na(BudgetCurrency))
+    ConvertedBudget <- BudgetValue
+  else if (BudgetCurrency == "DKK")
+    ConvertedBudget <- BudgetValue * Currency['DKK']
+  else if (BudgetCurrency == "BRL")
+    ConvertedBudget <- BudgetValue * Currency['BRL']
+  else if (BudgetCurrency == "CAD")
+    ConvertedBudget <- BudgetValue * Currency['CAD']
+  else if (BudgetCurrency == "DEM")
+    ConvertedBudget <- BudgetValue * Currency['DEM']
+  else if (BudgetCurrency == "AUD")
+    ConvertedBudget <- BudgetValue * Currency['AUD']
+  else if (BudgetCurrency == "EUR")
+    ConvertedBudget <- BudgetValue * Currency['EUR']
+  else if (BudgetCurrency == "FIM")
+    ConvertedBudget <- BudgetValue * Currency['FIM']
+  else if (BudgetCurrency == "FRF")
+    ConvertedBudget <- BudgetValue * Currency['FRF']
+  else if (BudgetCurrency == "GBP")
+    ConvertedBudget <- BudgetValue * Currency['GBP']
+  else if (BudgetCurrency == "INR")
+    ConvertedBudget <- BudgetValue * Currency['INR']
+  else if (BudgetCurrency == "NOK")
+    ConvertedBudget <- BudgetValue * Currency['NOK']
+  else if (BudgetCurrency == "SEK")
+    ConvertedBudget <- BudgetValue * Currency['SEK']
+})
+
+#Remove all NA rows for the converted budget, usa_gross_income and worldwide_gross_income
+merge.movies.filter <- merge.movies.filter %>% 
+  filter(!is.na(ConvertedBudget) & !is.na(usa_gross_income) & !is.na(worldwide_gross_income) & !is.na(reviews_from_critics) & !is.na(reviews_from_users))
+
+#Dont know the significance of this but its there and idk why
+table_d_country <- table(merge.movies.filter$country)
+order_table_d_country <- table_d_country[order(table_d_country)]
+top_table_d_country <- order_table_d_country[order_table_d_country > 100]
+top_d_country_names <- names(top_table_d_country)
+top_d_country_names
+
+#remove columns like budget value and budget currency
+merge.movies.filter.clean = subset(merge.movies.filter, select = -c(BudgetValue,BudgetCurrency,weighted_average_vote) )
+```
+
+```{r}
+summary(merge.movies.filter.clean)
+```
+
+#Now converting and cleaning average ratings and metascores
+```{r}
+#Convert average ratings from numerical to integer
+avg_votes_integer <- as.integer(merge.movies.filter.clean$average_votes)
+merge.movies.filter.clean$avg_votes_integer <- avg_votes_integer
+# this variable is created because SOM and EDA
+
+#Now the metascore has a lot of NAs so we need to get rid of it. 
+merge.movies.filter.clean <- merge.movies.filter.clean%>% 
+  filter(!is.na(metascore))
+```
+
+```{r}
+str(merge.movies.filter.clean)
+#merge.movies.filter.clean
+```
+# That was the Final Step for cleaning and preparing the dataset. 
+
+
+
+
+#Create a subset of only numeric value to run correlation
+```{r}
+movie.num.int = subset(merge.movies.filter.clean, select = -c( imdb_title_id, title, genre, country, language, director, actors, budget, average_votes))
+```
+
+```{r}
+summary(movie.num.int)
+```
+
+
+#Calculate Correlations
+```{r}
+#Run the correlation
+cor(movie.num.int)
+#run the pairs plot 
+pairs(movie.num.int, panel = panel.smooth , pch=".")
+```
+#Plot histograms
+```{r}
+#plot a histogram of avg_votes_integer
+hist(movie.num.int$avg_votes_integer)
+#plot a histogram of ConvertedBudget
+hist(movie.num.int$ConvertedBudget)
+#plot a histogram of duration
+hist(movie.num.int$duration)
+#plot a histogram of worldwide_gross_income
+hist(movie.num.int$worldwide_gross_income)
+#plot a histogram of the usa_gross_income
+hist(movie.num.int$usa_gross_income)
+#plot a histogram of reviews_from_critics
+hist(movie.num.int$reviews_from_critics)
+#plot a histogram of reviews_from_users
+hist(movie.num.int$reviews_from_users)
+#plot a histogram of metascores
+hist(movie.num.int$metascore)
+#plot a histogram of total_votes
+hist(movie.num.int$total_votes)
+```
+```{r}
+#Load library
+library(ggplot2)
+```
+
+#Running GGplot and BiDimensional Plot
+```{r}
+#Plot a scatter plot for ConvertedBudget and avg_votes_integer
+ggplot(movie.num.int, aes(ConvertedBudget, avg_votes_integer)) + geom_jitter()+ ggtitle("Scatter plot for converted budget vs average votes")
+#Plot a scatter plot for Worldwide_gross_income and avg_votes_integer
+ggplot(movie.num.int, aes( worldwide_gross_income, avg_votes_integer)) + geom_jitter() + ggtitle("Scatter plot for worldwide gross income vs average votes")
+#Plot a scatter plot for duration and avg_votes_integer
+ggplot(movie.num.int, aes(duration, avg_votes_integer)) + geom_jitter() + ggtitle("Scatter plot for duration vs average votes")
+#Plot a scatter plot for reviews_from_critics and avg_votes_integer
+ggplot(movie.num.int, aes(reviews_from_critics, avg_votes_integer)) + geom_jitter() + ggtitle("Scatter plot for reviews from critics vs average_votes")
+#Plot a scatter plot for total_votes and avg_votes_integer
+ggplot(movie.num.int, aes(total_votes, avg_votes_integer)) + geom_jitter() + ggtitle("Scatter plot for total votes vs average_votes")
+#Plot a scatter plot for usa_gross_income and avg_votes_integer
+ggplot(movie.num.int, aes(usa_gross_income, avg_votes_integer)) + geom_jitter() + ggtitle("Scatter plot for usa_gross_income vs average_votes")
+#Plot a scatter plot for reviews from users and avg_votes_integer
+ggplot(movie.num.int, aes(reviews_from_users, avg_votes_integer)) + geom_jitter() + ggtitle("Scatter plot for review from users vs average votes")
+#Plot a scatter plot for metascores and aavg_votes_integer
+ggplot(movie.num.int, aes(metascore, avg_votes_integer)) + geom_jitter() + ggtitle("Scatter plot for metascore vs average votes")
+```
+
+```{r}
+summary(movie.num.int)
+```
+
+```{r}
+#plot a bidimenional density plot for ConvertedBudget and avg_votes_integer
+bdp <- kde2d(movie.num.int$ConvertedBudget, movie.num.int$avg_votes_integer, n = 1000)
+image(bdp, xlim=c(0,1.2e+08))
+#plot a bidimenional density plot for worldwide_gross_income and avg_votes_integer
+bdp <- kde2d(movie.num.int$worldwide_gross_income, movie.num.int$avg_votes_integer, n = 1000)
+image(bdp, xlim=c(0,200000000))
+#plot a bidimenional density plot for duration and avg_votes_integer
+bdp <- kde2d(movie.num.int$duration, movie.num.int$avg_votes_integer, n = 1000)
+image(bdp, xlim=c(60,270))
+#plot a bidimenional density plot for reviews_from_critics and avg_votes_integer
+bdp <- kde2d(movie.num.int$reviews_from_critics, movie.num.int$avg_votes_integer, n = 1000)
+image(bdp, xlim=c(0,1000))
+#plot a bidimenional density plot for total_votes and avg_votes_integer
+bdp <- kde2d(movie.num.int$total_votes, movie.num.int$avg_votes_integer, n = 1000)
+image(bdp, xlim=c(0,250000))
+#plot a bidimenional density plot for usa_gross_income and avg_votes_integer
+bdp <- kde2d(movie.num.int$usa_gross_income, movie.num.int$avg_votes_integer, n = 1000)
+image(bdp, xlim=c(0,100000000))
+#plot a bidimenional density plot for reviews_from_users and avg_votes_integer
+bdp <- kde2d(movie.num.int$reviews_from_users, movie.num.int$avg_votes_integer, n = 1000)
+image(bdp, xlim=c(0,2000))
+#plot a bidimenional density plot for metascore andavg_votes_integer
+bdp2 <- kde2d(movie.num.int$metascore, movie.num.int$avg_votes_integer, n = 100)
+image(bdp2, xlim=c(0,100))
+```
+
+
+#TIME FOR PCA
+```{r}
+#if(require(pca3d) == FALSE){
+  ('pca3d')
+#}
+#library(pca3d)
+```
+
+```{r}
+#create a subset of the data without the target variable (average_votes)
+merge.movies.pca.data = subset(movie.num.int, select = -c(avg_votes_integer) )
+
+#run PCA
+#variables are centered and scaled before analysis
+merge.movies.pca <- prcomp(merge.movies.pca.data, center = T, scale = T)
+
+#inspect the attributes of the PCA object returned by prcomp
+attributes(merge.movies.pca)
+
+#visual analysis of PCA
+plot(merge.movies.pca)
+```
+```{r}
+#calculate the proportion of explained variance (PEV) from the std values
+merge.movies.pca.var <- merge.movies.pca$sdev^2
+merge.movies.pca.var
+merge.movies.pca.PEV <- merge.movies.pca.var / sum(merge.movies.pca.var)
+merge.movies.pca.PEV
+```
+
+```{r}
+#plot the cumulative value of PEV for increasing number of additional PCs
+opar <- par()
+plot(
+  cumsum(merge.movies.pca.PEV),
+  ylim = c(0,1),
+  xlab = 'PC',
+  ylab = 'cumulative PEV',
+  pch = 20,
+  col = 'orange'
+)
+abline(h = 0.8, col = 'red', lty = 'dashed')
+par(opar)
+```
+```{r}
+#get and inspect the loadings for each PC
+merge.movies.pca.loadings <- merge.movies.pca$rotation
+merge.movies.pca.loadings
+```
+
+```{r}
+#plot the loadings for the first three PCs as a barplot
+opar <- par()
+labvector = c('PC1', 'PC2', 'PC3')
+barplot(
+  merge.movies.pca.loadings[,c(1:3)],
+  beside = T,
+  yaxt = 'n',
+  names.arg = labvector,
+  col = rainbow_hcl(8),
+  ylim = c(-1,1),
+  border = 'white',
+  ylab = 'loadings'
+)
+axis(2, seq(-1,1,0.1))
+legend(
+  'bottomright',
+  bty = 'n',
+  col = rainbow_hcl(8),
+  pch = 15,
+  row.names(merge.movies.pca.loadings)
+)
+par(opar)
+
+```
+
+```{r}
+#generate a biplot for each pair of important PC's
+opar = par()
+par(mfrow = c(2,2))
+biplot(
+  merge.movies.pca,
+  scale = 0,
+  col = c('grey40','orange')
+)
+biplot(
+  merge.movies.pca,
+  choices = c(1,3),
+  scale = 0,
+  col = c('grey40','orange')
+)
+biplot(
+  merge.movies.pca,
+  choices = c(2,3),
+  scale = 0,
+  col = c('grey40','orange')
+)
+par(opar)
+```
+
+#Cluster Analysis
+## First data will need to be standardised
+```{r}
+#Standardize the data
+movie.data.scaled <- scale(merge.movies.pca.data)
+```
+
+
+## Check which value of k, the number of clusters is optimal
+```{r}
+#Elbow method
+fviz_nbclust(movie.data.scaled, kmeans, method = "wss") +
+  geom_vline(xintercept = 3, linetype = 2)+
+  labs(subtitle = "Elbow method")
+
+#Silhouette method
+fviz_nbclust(movie.data.scaled, kmeans, method = "silhouette")+
+  labs(subtitle = "Silhouette method")
+```
+
+####  cluster analysis
+```{r}
+### hierarchical clustering - complete linkage
+dist.movie.data.scaled <- dist(movie.data.scaled, method = 'euclidian')
+hc_movie.data.scaled <- hclust(dist.movie.data.scaled, method = 'complete')
+###  plot the associated dendrogram
+plot(hc_movie.data.scaled, hang = -0.1)
+###  select a partition containing 2 and 3 groups
+hc_cluster_movie.data.scaled2 <- cutree(hc_movie.data.scaled, k = 2)
+hc_cluster_movie.data.scaled3 <- cutree(hc_movie.data.scaled, k = 3)
+```
+
+```{r}
+plot(hc_movie.data.scaled)
+rect.hclust(hc_movie.data.scaled , k = 2, border = 2:6)
+abline(h = 2, col = 'red') 
+```
+
+```{r}
+plot(hc_movie.data.scaled)
+rect.hclust(hc_movie.data.scaled , k = 3, border = 2:6)
+abline(h = 3, col = 'red')
+```
+
+
+
+```{r}
+#k-means clustering with 2 and 3 groups
+res.km.1 <- eclust(movie.data.scaled, "kmeans",k = 2)
+res.km.2 <- eclust(movie.data.scaled, "kmeans",k = 3)
+```
+
+#### 3. Evaluation of cluster results
+```{r}
+### silhoutte plots
+
+fviz_silhouette(res.km.1)
+fviz_silhouette(res.km.2)
+
+###  get the attributes averages per cluster
+res.km.1
+res.km.2
+```
+
+
+#What are SOM--> Kohonen artifical neural network
+## -- useful for clustering and data visualisation
+## -- objective: convert high dimensional input into low dimensional maps
+## -- SOM only works on numerical data 
+
+```{r}
+#install.packages("kohonen")
+if(require(kohonen) == FALSE){
+  ('kohonen')
+}
+library(kohonen)
+```
+
+#As you can see the accuracy of this is quite low with only 6/6 in predicted/actual having 8 results. 
+
+#Now we understand that this does not give us enough accuracy. Therefore, we need to alter our dependent variable and group the numbers by integers so that we recieve better/accurate results. Fully understanding that we will lose the most accuracy if we choose to continue this method, but maybe the level of detail we originally had for the dependent variable was too much.
+
+#Let's try if we can use the average votes as integers so the new dependent variable would be avg_votes_int and that would be column 9.
+
+```{r}
+data2 <- movie.num.int
+str(data2)
+# creating smaller datasets
+set.seed (999)
+abc <- sample (3, nrow(data2), replace = T, prob = c(0.2, 0.3, 0.5))
+data4 <- data2[abc == 1,]
+data5 <- data2[abc == 2,]
+data6 <- data2[abc == 3,]
+```
+
+```{r}
+# define a formula
+averagevotesint_formula <- lm(avg_votes_integer ~ duration + usa_gross_income + worldwide_gross_income + metascore + reviews_from_users + reviews_from_critics + total_votes + ConvertedBudget, data = data4)
+```
+
+```{r}
+# Lets only try with 20% of the dataset first. It will help to not overwhelm the RAM
+# This means we will be using data4.df, with 1308 obs of 9 variables
+# Supervised Self-Organising Maps
+
+# Data Split
+set.seed (425)
+ind2 <- sample (2, nrow(data4), replace = T, prob = c(0.7, 0.3))
+train2 <- data4[ind2 == 1,]
+test2 <- data4[ind2 == 2,]
+# Train2 has 930 obs and Test2 has 378 obs. Hopefully this prediction will run
+# Data Normalization
+trainC <- scale(train2[,-9])
+testC <- scale(test2[,-9],
+               center = attr(trainC, "scaled:center"),
+               scale = attr(trainC, "scaled:scale"))
+trainD <- factor(train2[,9])
+D <- factor(test2[,9])
+test2[,9] <- 0
+testCD <- list(independent = testC, dependent = test2[,9])
+```
+
+```{r}
+#Classification and Prediction
+set.seed(678) 
+map4 <- xyf(trainC,
+            classvec2classmat(factor(trainD)),
+            grid = somgrid(3, 3, "hexagonal"),
+            rlen=100)
+
+plot(map4, type = 'changes')
+# note that mean distance to closest unit is y-axis 1, the other side also has values. Black line is matrix 1 which based on data from independent variables and matrix 2 is based on the dependent variable data which contains information on whether or not the average rating of the movie was higher or lower. So we can see that the values fall at a continuous pace and seem to stabilise right at the end and at a very low value. 
+#dev.off()
+#png(file = 'map4_2.png')
+plot(map4)
+#dev.off()
+#png(file = 'map4_3.png')
+plot(map4, type = 'count')
+#dev.off()
+```
+
+```{r}
+#Prediction for Map4
+pred4 <-predict(map4, newdata = testCD)
+# To assess the accuracy, a matrix for predicted vs actual has been created
+table(Predicted = pred4$predictions[[2]], Actual = D)
+```
+
+```{r}
+write.table(table(Predicted = pred4$predictions[[2]], Actual = D), file = "4table", sep = ",", quote = FALSE, row.names = T)
+# as we can see, there are several numbers that overlap between the two groups with 1 accurate prediction for 4, 11 accurate predictions for 5, 113 accurate predictions for 6, 14 accurate predictions for 7, and 1 accurate prediction for 8. 
+# If we add those variables up, that would be 140 accurate predictions for the 20% of the data. 
+(144/378) * 100
+# for 20% of the data, there is 37.04% accuracy
+```
+
+
+
+#Now to evaluate this model. There is one way this model can be interpreted: classification. 
+
+# There are multiple methods to run classification acuracy. 
+### the method that I have previously used is a precistion matrix. (According to -https://www.jeremyjordan.me/evaluating-a-machine-learning-model/). The Precision matrix isthe fraction of relevant examples (true positives) among all of the examples which were predicted to belong in a certain class. Witht that method, I have a precision of 37. 04% 
+# Lets try a confusion matrix
+```{r}
+if(require(caret) == FALSE){
+  ('caret')
+}
+library(caret)
+# lets change everything into factors
+Actual <- D
+Predicted <- pred4$predictions[[2]]
+class(Predicted)
+# As we can see there is a difference between the two vectors, I will need to remove the level 9 in the pred4$prediction[[2]].
+droplevels(Predicted, exclude = "9")
+
+is.na(droplevels(Predicted, exclude = "9"))
+
+!is.na(droplevels(Predicted, exclude = "9"))
+
+Predicted[!is.na(droplevels(Predicted, exclude = "9"))]
+
+Predicted1 <- Predicted[!is.na(droplevels(Predicted, exclude = "9"))]
+
+Predicted1 <- droplevels(Predicted1, exclude = "9")
+```
+
+```{r}
+Predicted1
+```
+
+```{r}
+confusionMatrix(Predicted1, Actual)
+```
